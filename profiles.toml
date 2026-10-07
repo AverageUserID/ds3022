@@ -1,0 +1,8 @@
+active = "uvasds"
+
+[profiles.local]
+PREFECT_API_URL = "http://127.0.0.1:4200/api"
+
+[profiles.uvasds]
+PREFECT_API_URL = "https://sds-prefect.pods.uvarc.io/api"
+PREFECT_API_AUTH_STRING = "admin:ableJARSslimey37"

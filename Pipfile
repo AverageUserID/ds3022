@@ -19,7 +19,7 @@ asyncio = "*"
 psutil = "*"
 sympy = "*"
 bs4 = "*"
-prefect = "==3.8.7"
+prefect = "*"
 
 [dev-packages]
 
