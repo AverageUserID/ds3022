@@ -54,48 +54,31 @@ logging.getLogger("prefect").addHandler(file_handler)
 # local duckdb file, created if missing
 conn = duckdb.connect("actions.duckdb")  
 
-@task(name="ingest", log_prints=True, retries=3, retry_delay_seconds=5)
-def ingest_data():
-    # work with claude to fetch 100 records for each page
-    # and pull 10 pages total. This could be done in series,
-    # or if you want to look at previous prefect .map examples
-    # you could pull some/all pages concurrently.
-    #
-    # for help with github api pagination see
-    # https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api?apiVersion=2026-03-10
-    #
-    # httpx parses it into response.links. The "next" URL already includes 
-    # per_page and page, so params are only needed on the first request. 
-    # The loop ends when there is no "next" link (last page).
+# concurrent version: pages are requested by number instead of following "next" links,
+# since each "next" link is only known after the previous page returns (inherently serial).
+# the serial "next"-link version is in git history (commit 32b8dd2).
+# visit https://sds-prefect.pods.uvarc.io/v2/runs to review your flows
 
-    # this task already comes with a name, retry settings, and anything
-    # you print() is written to the log.
-    # visit https://sds-prefect.pods.uvarc.io/v2/runs to review your flows
-
-    # if you need to see a working example of this, see this file in this repo
-    # 04_apis/05_pagination.py
-
+@task(name="fetch_page", log_prints=True, retries=3, retry_delay_seconds=5)
+def fetch_page(page: int) -> list[dict]:
+    # fetch one page by number; pages don't depend on each other, so they can all run at once
     logger = get_run_logger()  # Prefect's logger for this task run; also goes to our log file
+    try:
+        response = httpx.get(URL, headers=HEADERS, params={"per_page": PER_PAGE, "page": page}, timeout=30)
+        response.raise_for_status()  # raise an error on 4xx/5xx so the task's retries kick in
+    except httpx.HTTPError as e:
+        logger.error(f"GitHub request failed on page {page}: {e}")
+        raise  # re-raise so Prefect marks the task failed and retries it
+    commits = response.json()
+    # logger, not print(): log_prints' print-patching can race when tasks start on many threads at once
+    logger.info(f"page {page}: {len(commits)} commits")
+    return commits
 
-    url, params = URL, {"per_page": PER_PAGE}  # params only needed on the first request
-    all_commits = []                           # collects every commit across all pages
 
-    # follow GitHub's "next" links until we've pulled PAGES pages or run out of pages
-    for page in range(1, PAGES + 1):
-        try:
-            response = httpx.get(url, headers=HEADERS, params=params)
-            response.raise_for_status()  # raise an error on 4xx/5xx so the task's retries kick in
-        except httpx.HTTPError as e:
-            logger.error(f"GitHub request failed on page {page}: {e}")
-            raise  # re-raise so Prefect marks the task failed and retries it
-        commits = response.json()
-        all_commits.extend(commits)
-        print(f"page {page}: {len(commits)} commits (total {len(all_commits)})")
-
-        url = response.links.get("next", {}).get("url")  # None on the last page
-        if not url:
-            break
-        params = None  # the "next" URL already contains per_page and page
+@task(name="store", log_prints=True)
+def store_commits(all_commits: list[dict]):
+    # flatten the commits and bulk-load them into a single DuckDB table
+    logger = get_run_logger()
 
     # keep only the fields we need, one tuple per commit (order matches the DataFrame columns below)
     rows = [
@@ -127,13 +110,19 @@ def ingest_data():
     except duckdb.Error:
         logger.exception("failed to write commits to actions.duckdb")
         raise
-    print(f"stored {conn.execute('SELECT count(*) FROM commits').fetchone()[0]} rows in commits")
+    # count(DISTINCT sha) < count(*) would mean a push mid-run shifted a commit onto two pages
+    total, unique = conn.execute("SELECT count(*), count(DISTINCT sha) FROM commits").fetchone()
+    print(f"stored {total} rows ({unique} unique commits) in commits")
 
 
 # name the flow something you can identify as yourself
-@flow(name="vra7dy-flow")
+# ThreadPoolTaskRunner gives the flow PAGES threads so every fetch_page can run at the same time
+@flow(name="vra7dy-flow", task_runner=ThreadPoolTaskRunner(max_workers=PAGES))
 def main_flow():
-    ingest_data()
+    futures = fetch_page.map(range(1, PAGES + 1))      # fan out: one task per page, all submitted at once
+    pages = futures.result()                           # fan in: wait for all 10; a list of 10 lists
+    all_commits = [c for page in pages for c in page]  # flatten into one list of 1000 commits
+    store_commits(all_commits)
 
 # it doesn't seem this flow executes when you run it. Why?
 # fix it ;^)
