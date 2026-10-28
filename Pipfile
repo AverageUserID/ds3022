@@ -20,12 +20,12 @@ sympy = "*"
 bs4 = "*"
 prefect = "==3.8.7"
 asyncio = "*"
-quixstreams = "*"
 httpx2 = "*"
-tornado = "*"
 requests-sse = "*"
 redis = "*"
 streamlit = "*"
+tornado = "*"
+quixstreams = "*"
 
 [dev-packages]
 

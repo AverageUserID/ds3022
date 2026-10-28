@@ -282,11 +282,11 @@
         },
         "cachetools": {
             "hashes": [
-                "sha256:9033308cc26b678784a27b096aab1541b9e698d785c3e9918b691ccd458d88df",
-                "sha256:a2223b80de434291ddf4c105354e533bbaf4d29382f5d1bc3e4b9332cb31061e"
+                "sha256:1096513bdeed468ba505df3d123e4578a5a22c955f4a9ba3912fd71f3f95363a",
+                "sha256:8722e08fc36ae0838a9a0a2ab9935554720de3343a62dad7aae7c595854c8623"
             ],
             "markers": "python_version >= '3.10'",
-            "version": "==7.2.5"
+            "version": "==7.2.6"
         },
         "certifi": {
             "hashes": [
@@ -809,7 +809,6 @@
                 "sha256:fa8f5efb344d6908a1ce62f4a24e2e5780f825d6f53f5f50ec5ffacac72936cb",
                 "sha256:fdd28f912fccfec1846a94e2e1e8f9b0012f557f0c46fe4f3eb0d7a87afcf90b"
             ],
-            "markers": "python_version >= '3.9' and python_full_version not in '3.9.0, 3.9.1'",
             "version": "==50.0.2"
         },
         "cycler": {
@@ -1406,11 +1405,11 @@
         },
         "jsonpath-ng": {
             "hashes": [
-                "sha256:da54eff64eef303b90a8491f50c607e6beb2eb4a6e66828edab948766d40c531",
-                "sha256:f58e7f88cdd2eb04a402c0d542e7d6db71909e521f4c23c62f4d2ee73266361e"
+                "sha256:748ffe4fce1a5f7f67f5414206ab4919bab99f800598de1f60df280a211d71df",
+                "sha256:8c8b0b32c24421ba150621863c6a943e84861edbe6a4414261d1ad7cba7828bc"
             ],
             "markers": "python_version >= '3.11'",
-            "version": "==1.13.0"
+            "version": "==1.14.0"
         },
         "jsonpointer": {
             "hashes": [
