@@ -23,6 +23,7 @@ tornado = "*"
 redis = "*"
 streamlit = "*"
 websockets = "<17,>=15"
+httpx2 = "*"
 
 [dev-packages]
 
