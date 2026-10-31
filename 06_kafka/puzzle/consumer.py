@@ -31,6 +31,7 @@ def consume_messages():
             consumer.subscribe([TOPIC])
             print(f"Consuming from topic '{TOPIC}' on {KAFKA_BROKER}")
             empty_polls = 0
+            orders = {}  # order_no -> letter, collected across all messages
             while empty_polls < MAX_EMPTY_POLLS:
                 msg = consumer.poll(1)
                 if msg is None:
@@ -44,15 +45,17 @@ def consume_messages():
                 # each are part of the `msg`: msg.key, msg.timestamp(), msg.value()
 
                 # key / timestamp / value
-                key = msg.key().decode("utf8")
+                # key = msg.key().decode("utf8")
 
                 # Kafka timestamps are (type, epoch milliseconds)
-                ts = datetime.fromtimestamp(msg.timestamp()[1] / 1000, tz=timezone.utc).isoformat()
+                # ts = datetime.fromtimestamp(msg.timestamp()[1] / 1000, tz=timezone.utc).isoformat()
 
                 # value is the actual json payload of the message content
                 value = json.loads(msg.value())
-
-                print(f"key={key} timestamp={ts} value={json.dumps(value)}")
+                orders[value["order_no"]] = value["letter"]
+                # print(f"key={key} timestamp={ts} value={json.dumps(value)}")
+            # Topic is quiet; sort by order_no and join the letters
+            print("".join(orders[k] for k in sorted(orders)))
     except Exception as e:
         print(f"Error consuming from Kafka: {e}")
 
