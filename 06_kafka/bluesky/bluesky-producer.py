@@ -17,8 +17,6 @@ last event it saw, using Jetstream's `cursor` parameter (a unix timestamp in mic
 The cursor location is stored in memory. What will happen if the module crashes?
 
 Enable Kafka publishing:
-- Start the Kafka brokers: `docker compose up -d` from `06_kafka/`, and confirm they are up
-    in the Redpanda Console.
 - Uncomment the Kafka setup block below (`KAFKA_BROKER`, `app`, `topic`, `producer`).
     The imports it needs are already at the top of the file.
 - In `on_message`, replace `print(did)` with a produce step: serialize the event with
@@ -58,34 +56,69 @@ JETSTREAM_URL = "wss://jetstream2.us-west.bsky.network/subscribe?wantedCollectio
 CURSOR_REWIND_US = 2_000_000               # On reconnect, rewind 2s so no events are missed (may produce a few duplicates)
 MAX_BACKOFF = 60                           # Max seconds to wait between reconnect attempts
 TOPIC_RETENTION_MS = 3 * 60 * 60 * 1000    # 3 hours
+CURSOR_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jetstream_cursor.txt")  # gitignored
+CURSOR_SAVE_INTERVAL = 5                   # Seconds between periodic cursor saves
+RATE_INTERVAL = 5                          # Seconds between msgs/sec reports
 
-cursor = None                              # time_us of the most recent event seen; used to resume after a disconnect
+
+def load_cursor():
+    """Return the saved cursor, or None if missing, unreadable, or older than the topic's retention."""
+    try:
+        with open(CURSOR_FILE) as f:
+            saved = int(f.read().strip())
+    except (FileNotFoundError, ValueError) as e:
+        if not isinstance(e, FileNotFoundError):
+            print(f"Ignoring unreadable cursor file: {e}")
+        return None
+    # Events older than retention would already be gone from Kafka, so resuming that far back is pointless
+    if saved < (time.time() * 1000 - TOPIC_RETENTION_MS) * 1000:
+        print("Saved cursor is older than topic retention; starting from live.")
+        return None
+    return saved
+
+def save_cursor():
+    """Write the cursor atomically (temp file + rename) so a crash mid-write can't corrupt it."""
+    if cursor is None:
+        return
+    try:
+        tmp = CURSOR_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(str(cursor))
+        os.replace(tmp, CURSOR_FILE)
+    except OSError as e:
+        print(f"Failed to save cursor: {e}")
+
+
+cursor = load_cursor()                     # time_us of the most recent event seen; used to resume after a disconnect/restart
+last_save = time.time()                    # When the cursor was last written to disk
+msg_count = 0                              # Messages produced since the last rate report
+last_report = time.time()                  # When msgs/sec was last printed
 backoff = 1                                # Current reconnect delay in seconds
 stop = False                               # Set on Ctrl-C to break out of the reconnect loop
 
-# KAFKA_BROKER = os.getenv("KAFKA_BROKER", "127.0.0.1:19092,127.0.0.1:29092,127.0.0.1:39092")
-#
-# app = Application(
-#     broker_address=KAFKA_BROKER,
-#     producer_extra_config={
-#         "broker.address.family": "v4",
-#         # Batch settings for better throughput
-#         "linger.ms": 5,  # Wait up to 5ms to batch messages
-#         "batch.size": 100000,  # Batch up to 100KB
-#     }
-# )
-# topic = app.topic(
-#     name="bluesky-events",
-#     value_serializer="json",
-#     config=TopicConfig(
-#         num_partitions=1,
-#         replication_factor=3,
-#         extra_config={"retention.ms": str(TOPIC_RETENTION_MS)}
-#     )
-# )
-#
-# # Create a kafka producer, reused for every message
-# producer = app.get_producer()
+KAFKA_BROKER = os.getenv("KAFKA_BROKER", "127.0.0.1:19092,127.0.0.1:29092,127.0.0.1:39092")
+
+app = Application(
+    broker_address=KAFKA_BROKER,
+    producer_extra_config={
+        "broker.address.family": "v4",
+        # Batch settings for better throughput
+        "linger.ms": 5,  # Wait up to 5ms to batch messages
+        "batch.size": 100000,  # Batch up to 100KB
+    }
+)
+topic = app.topic(
+    name="bluesky-events",
+    value_serializer="json",
+    config=TopicConfig(
+        num_partitions=1,
+        replication_factor=3,
+        extra_config={"retention.ms": str(TOPIC_RETENTION_MS)}
+    )
+)
+
+# Create a kafka producer, reused for every message
+producer = app.get_producer()
 
 
 def on_open(ws):
@@ -96,12 +129,17 @@ def on_open(ws):
 
 def on_message(ws, message):
     """Handle each Jetstream event: track cursor, skip non-commit events, key by DID, (optionally) produce to Kafka."""
-    global cursor
+    global cursor, last_save, msg_count, last_report
     try:
         data = json.loads(message)
 
         # Every event (including identity/account) carries time_us; record it as the resume point
         cursor = data.get("time_us", cursor)
+
+        # Persist the cursor periodically so a restart resumes close to where it left off
+        if time.time() - last_save >= CURSOR_SAVE_INTERVAL:
+            save_cursor()
+            last_save = time.time()
 
         # Jetstream also sends 'identity' and 'account' events, which have no 'commit' field
         if data.get("kind") != "commit":
@@ -110,7 +148,16 @@ def on_message(ws, message):
         # The DID (decentralized identifier) uniquely identifies the acting user
         did = data["did"]
 
-        print(did)
+        # Serialize (DID key, full event as JSON value) and hand it to the producer's buffer
+        msg = topic.serialize(key=did, value=data)
+        producer.produce(topic=topic.name, key=msg.key, value=msg.value)
+
+        # Count produced messages and print the average rate every RATE_INTERVAL seconds
+        msg_count += 1
+        elapsed = time.time() - last_report
+        if elapsed >= RATE_INTERVAL:
+            print(f"{msg_count / elapsed:,.0f} msgs/sec ({msg_count:,} in {elapsed:.1f}s)")
+            msg_count, last_report = 0, time.time()
 
     except (json.JSONDecodeError, KeyError) as e:
         print(f"Bad message ({type(e).__name__}: {e})")
@@ -151,5 +198,6 @@ except KeyboardInterrupt:
     pass
 finally:
     print("\nStopped.")
-    # Ensure we flush on exit
-    # producer.flush()
+    # Ensure we flush on exit, then save the final cursor
+    producer.flush()
+    save_cursor()
