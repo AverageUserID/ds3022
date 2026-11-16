@@ -13,8 +13,13 @@ from quixstreams import Application
 BROKER = os.getenv("KAFKA_BROKER", "127.0.0.1:19092,127.0.0.1:29092,127.0.0.1:39092")
 TOPIC = "orders-by-customer"
 NUM_PARTITIONS = 3
-# quixstreams uses the murmur2 partitioner (Java-compatible); these keys split 2/2/2 across 3 partitions
-KEYS = ["alice", "bob", "carol", "dave", "erin", "frank"]
+# quixstreams uses the murmur2 partitioner (Java-compatible); keys grouped by the partition they hash to
+KEY_GROUPS = {
+    0: ["alice", "bob"],
+    1: ["dave", "frank"],
+    2: ["carol", "erin"],
+}
+KEYS = [k for group in KEY_GROUPS.values() for k in group]
 NUM_MESSAGES = 900
 
 
