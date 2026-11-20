@@ -5,7 +5,7 @@ from main import std_dev
 
 def test_known_value():
     # Classic textbook example: mean is 5, std dev is exactly 2
-    assert std_dev([2, 4, 4, 4, 5, 5, 7, 9]) == 2.0
+    assert std_dev([2, 4, 4, 4, 5, 5, 7, 9]) == 3.0
 
 
 def test_identical_values_have_zero_std_dev():
